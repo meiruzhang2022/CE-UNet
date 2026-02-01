@@ -74,22 +74,59 @@ class CrossEntropyLossWrapper(nn.Module):
         loss = F.cross_entropy(logits, labels_binary)
         return loss
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.75, gamma=2, reduction='mean'):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha  # 平衡正负样本的权重
-        self.gamma = gamma  # 调节难易样本的权重
+    def __init__(self, alpha=0.75, gamma=2, reduction='mean', eps=1e-6):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
         self.reduction = reduction
-        self.bce = nn.BCEWithLogitsLoss(reduction='none')  
+        self.eps = eps
+        self.bce = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, inputs, targets):
-        bce_loss = self.bce(inputs, targets)
+        # 1. 原始 BCE loss
+        bce_loss = self.bce(inputs, targets.float())
+
+        # 2. 计算 pt，并做数值稳定处理
         pt = torch.sigmoid(inputs)
-        focal_weight = self.alpha * (1 - pt) ** self.gamma * targets + (1 - self.alpha) * pt ** self.gamma * (1 - targets)
+        pt = pt.clamp(self.eps, 1.0 - self.eps)
+
+        # 3. 计算 focal weight
+        pos_weight = self.alpha * (1 - pt) ** self.gamma
+        neg_weight = (1 - self.alpha) * pt ** self.gamma
+        focal_weight = pos_weight * targets + neg_weight * (1 - targets)
+
+        # 4. 叠加权重
         focal_loss = focal_weight * bce_loss
-        return focal_loss.mean() if self.reduction == 'mean' else focal_loss.sum()
-        
+
+        # 5. reduction
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:  # 'none'
+            return focal_loss
+
+#
+# class FocalLoss(nn.Module):
+#     def __init__(self, alpha=0.75, gamma=2, reduction='mean'):
+#         super(FocalLoss, self).__init__()
+#         self.alpha = alpha  # 平衡正负样本的权重
+#         self.gamma = gamma  # 调节难易样本的权重
+#         self.reduction = reduction
+#         self.bce = nn.BCEWithLogitsLoss(reduction='none')
+#
+#     def forward(self, inputs, targets):
+#         bce_loss = self.bce(inputs, targets)
+#         pt = torch.sigmoid(inputs)
+#         focal_weight = self.alpha * (1 - pt) ** self.gamma * targets + (1 - self.alpha) * pt ** self.gamma * (1 - targets)
+#         focal_loss = focal_weight * bce_loss
+#         return focal_loss.mean() if self.reduction == 'mean' else focal_loss.sum()
+#         
 
 class DiceFocalLoss(nn.Module):
     def __init__(self, dice_weight=0.6 ,focal_weight=0.4):
